@@ -1,0 +1,3 @@
+[submodule "vendor/msf_gif"]
+	path = vendor/msf_gif
+	url = https://github.com/notnullnotvoid/msf_gif.git

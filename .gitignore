@@ -1,0 +1,23 @@
+# Build artifacts
+build/
+*.wasm
+*.js.mem
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor backup files
+*.bak
+*.orig
+
+# Temporary files
+*.tmp
+*.temp

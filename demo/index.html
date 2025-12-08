@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GIF Encoder WASM Demo</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+
+        h1 {
+            margin-bottom: 20px;
+        }
+
+        .controls {
+            margin: 20px 0;
+        }
+
+        .controls label {
+            display: inline-block;
+            width: 80px;
+        }
+
+        .controls input[type="number"] {
+            width: 60px;
+        }
+
+        button {
+            padding: 8px 16px;
+            margin: 5px;
+        }
+
+        video,
+        img {
+            max-width: 100%;
+            border: 1px solid #ccc;
+        }
+
+        .preview {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            margin: 20px 0;
+        }
+
+        .preview>div {
+            flex: 1;
+            min-width: 300px;
+        }
+
+        #status {
+            padding: 10px;
+            margin: 10px 0;
+            background: #f0f0f0;
+        }
+
+        #progress {
+            margin: 10px 0;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>GIF Encoder WASM Demo</h1>
+
+    <div>
+        <input type="file" id="videoInput" accept="video/*">
+    </div>
+
+    <div class="controls">
+        <label>FPS:</label>
+        <input type="number" id="fps" value="10" min="1" max="30">
+
+        <label>Quality:</label>
+        <input type="number" id="quality" value="16" min="1" max="16">
+
+        <label>Scale %:</label>
+        <input type="number" id="scale" value="50" min="10" max="100">
+    </div>
+
+    <div>
+        <button id="generateBtn" disabled>Generate GIF</button>
+        <button id="downloadBtn" style="display:none">Download GIF</button>
+    </div>
+
+    <div id="status">Loading WASM module...</div>
+    <div id="progress"></div>
+
+    <div class="preview">
+        <div>
+            <h3>Video</h3>
+            <video id="videoPreview" controls></video>
+        </div>
+        <div>
+            <h3>GIF Output</h3>
+            <img id="gifPreview" style="display:none">
+        </div>
+    </div>
+
+    <canvas id="canvas" style="display:none"></canvas>
+
+    <script src="../build/gif_encoder.js"></script>
+    <script>
+        let Module = null;
+        let gifBlob = null;
+
+        const videoInput = document.getElementById('videoInput');
+        const videoPreview = document.getElementById('videoPreview');
+        const gifPreview = document.getElementById('gifPreview');
+        const generateBtn = document.getElementById('generateBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const status = document.getElementById('status');
+        const progress = document.getElementById('progress');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        // Init WASM
+        createGifEncoderModule().then(mod => {
+            Module = mod;
+            status.textContent = 'Ready. Select a video file.';
+        }).catch(err => {
+            status.textContent = 'Error loading WASM: ' + err.message;
+        });
+
+        // Video selection
+        videoInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            videoPreview.src = URL.createObjectURL(file);
+            videoPreview.onloadedmetadata = () => {
+                generateBtn.disabled = !Module;
+                status.textContent = `Video: ${videoPreview.videoWidth}x${videoPreview.videoHeight}, ${videoPreview.duration.toFixed(2)}s`;
+            };
+
+            gifPreview.style.display = 'none';
+            downloadBtn.style.display = 'none';
+        });
+
+        // Generate GIF
+        generateBtn.addEventListener('click', async () => {
+            if (!Module || !videoPreview.src) return;
+
+            generateBtn.disabled = true;
+            const startTime = performance.now();
+
+            const fps = parseInt(document.getElementById('fps').value) || 10;
+            const quality = parseInt(document.getElementById('quality').value) || 16;
+            const scale = (parseInt(document.getElementById('scale').value) || 50) / 100;
+
+            const width = Math.round(videoPreview.videoWidth * scale);
+            const height = Math.round(videoPreview.videoHeight * scale);
+            const centiSeconds = Math.round(100 / fps);
+
+            canvas.width = width;
+            canvas.height = height;
+
+            try {
+                // Extract frames
+                const frames = [];
+                const duration = videoPreview.duration;
+                const totalFrames = Math.floor(duration * fps);
+
+                for (let i = 0; i < totalFrames; i++) {
+                    progress.textContent = `Extracting frame ${i + 1}/${totalFrames}`;
+                    await seekVideo(i / fps);
+                    ctx.drawImage(videoPreview, 0, 0, width, height);
+                    const imageData = ctx.getImageData(0, 0, width, height);
+                    frames.push(new Uint8Array(imageData.data));
+                }
+
+                // Encode GIF
+                const encoder = new Module.GifEncoder(width, height);
+
+                for (let i = 0; i < frames.length; i++) {
+                    progress.textContent = `Encoding frame ${i + 1}/${frames.length}`;
+                    if (!encoder.addFrame(frames[i], centiSeconds, quality)) {
+                        throw new Error('Failed to add frame ' + i);
+                    }
+                }
+
+                progress.textContent = 'Finalizing...';
+                const gifData = encoder.finish();
+
+                if (!gifData) {
+                    throw new Error('Failed to generate GIF');
+                }
+
+                // Display result
+                const arr = new Uint8Array(gifData.length);
+                for (let i = 0; i < gifData.length; i++) arr[i] = gifData[i];
+
+                gifBlob = new Blob([arr], { type: 'image/gif' });
+                gifPreview.src = URL.createObjectURL(gifBlob);
+                gifPreview.style.display = 'block';
+                downloadBtn.style.display = 'inline';
+
+                const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
+                status.textContent = `Done! ${frames.length} frames, ${(gifBlob.size / 1024).toFixed(1)} KB, ${elapsed}s`;
+                progress.textContent = '';
+
+            } catch (err) {
+                status.textContent = 'Error: ' + err.message;
+            }
+
+            generateBtn.disabled = false;
+        });
+
+        // Download
+        downloadBtn.addEventListener('click', () => {
+            if (!gifBlob) return;
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(gifBlob);
+            link.download = 'output.gif';
+            link.click();
+        });
+
+        function seekVideo(time) {
+            return new Promise(resolve => {
+                videoPreview.currentTime = time;
+                videoPreview.onseeked = resolve;
+            });
+        }
+    </script>
+</body>
+
+</html>
