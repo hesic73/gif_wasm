@@ -1,0 +1,65 @@
+name: Deploy Demo to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 'latest'
+
+      - name: Build WASM
+        run: |
+          mkdir -p build
+          emcc src/bindings.cpp \
+            -I vendor/msf_gif \
+            -O3 \
+            -s WASM=1 \
+            -s MODULARIZE=1 \
+            -s EXPORT_NAME="createGifEncoderModule" \
+            -s ALLOW_MEMORY_GROWTH=1 \
+            -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap']" \
+            -lembind \
+            --emit-tsd gif_encoder.d.ts \
+            -o build/gif_encoder.js
+
+      - name: Prepare Pages
+        run: |
+          mkdir -p _site
+          cp demo/index.html _site/
+          cp build/gif_encoder.js _site/
+          cp build/gif_encoder.wasm _site/
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
