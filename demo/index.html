@@ -104,8 +104,9 @@
 
     <canvas id="canvas" style="display:none"></canvas>
 
-    <script src="../build/gif_encoder.js"></script>
-    <script>
+    <script type="module">
+        import createGifEncoderModule from '../build/gif_encoder.mjs';
+
         let Module = null;
         let gifBlob = null;
 
@@ -117,7 +118,7 @@
         const status = document.getElementById('status');
         const progress = document.getElementById('progress');
         const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
         // Init WASM
         createGifEncoderModule().then(mod => {
@@ -161,47 +162,38 @@
             canvas.height = height;
 
             try {
-                // Extract frames
-                const frames = [];
-                const duration = videoPreview.duration;
-                const totalFrames = Math.floor(duration * fps);
-
-                for (let i = 0; i < totalFrames; i++) {
-                    progress.textContent = `Extracting frame ${i + 1}/${totalFrames}`;
-                    await seekVideo(i / fps);
-                    ctx.drawImage(videoPreview, 0, 0, width, height);
-                    const imageData = ctx.getImageData(0, 0, width, height);
-                    frames.push(new Uint8Array(imageData.data));
-                }
-
-                // Encode GIF
+                const totalFrames = Math.floor(videoPreview.duration * fps);
                 const encoder = new Module.GifEncoder(width, height);
+                let gifData;
 
-                for (let i = 0; i < frames.length; i++) {
-                    progress.textContent = `Encoding frame ${i + 1}/${frames.length}`;
-                    if (!encoder.addFrame(frames[i], centiSeconds, quality)) {
-                        throw new Error('Failed to add frame ' + i);
+                try {
+                    // Encode each frame as soon as it is extracted instead of holding them all in memory
+                    for (let i = 0; i < totalFrames; i++) {
+                        progress.textContent = `Frame ${i + 1}/${totalFrames}`;
+                        await seekVideo(i / fps);
+                        ctx.drawImage(videoPreview, 0, 0, width, height);
+                        if (!encoder.addFrame(ctx.getImageData(0, 0, width, height).data, centiSeconds, quality)) {
+                            throw new Error('Failed to add frame ' + i);
+                        }
                     }
-                }
 
-                progress.textContent = 'Finalizing...';
-                const gifData = encoder.finish();
+                    progress.textContent = 'Finalizing...';
+                    gifData = encoder.finish();
+                } finally {
+                    encoder.delete();
+                }
 
                 if (!gifData) {
                     throw new Error('Failed to generate GIF');
                 }
 
-                // Display result
-                const arr = new Uint8Array(gifData.length);
-                for (let i = 0; i < gifData.length; i++) arr[i] = gifData[i];
-
-                gifBlob = new Blob([arr], { type: 'image/gif' });
+                gifBlob = new Blob([gifData], { type: 'image/gif' });
                 gifPreview.src = URL.createObjectURL(gifBlob);
                 gifPreview.style.display = 'block';
                 downloadBtn.style.display = 'inline';
 
                 const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
-                status.textContent = `Done! ${frames.length} frames, ${(gifBlob.size / 1024).toFixed(1)} KB, ${elapsed}s`;
+                status.textContent = `Done! ${totalFrames} frames, ${(gifBlob.size / 1024).toFixed(1)} KB, ${elapsed}s`;
                 progress.textContent = '';
 
             } catch (err) {

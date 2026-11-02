@@ -29,26 +29,14 @@ jobs:
           version: 'latest'
 
       - name: Build WASM
-        run: |
-          mkdir -p build
-          emcc src/bindings.cpp \
-            -I vendor/msf_gif \
-            -O3 \
-            -s WASM=1 \
-            -s MODULARIZE=1 \
-            -s EXPORT_NAME="createGifEncoderModule" \
-            -s ALLOW_MEMORY_GROWTH=1 \
-            -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap']" \
-            -lembind \
-            --emit-tsd gif_encoder.d.ts \
-            -o build/gif_encoder.js
+        run: ./build.sh
 
       - name: Prepare Pages
         run: |
-          mkdir -p _site
-          cp demo/index.html _site/
-          cp build/gif_encoder.js _site/
-          cp build/gif_encoder.wasm _site/
+          mkdir -p _site/demo _site/build
+          cp demo/index.html _site/demo/
+          cp build/gif_encoder.mjs build/gif_encoder.wasm _site/build/
+          echo '<meta http-equiv="refresh" content="0; url=demo/">' > _site/index.html
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

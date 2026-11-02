@@ -5,29 +5,29 @@ WebAssembly GIF encoder for JavaScript/TypeScript. Converts video frames to anim
 ## Usage
 
 ```typescript
-import createGifEncoderModule from './gif_encoder';
+import createGifEncoderModule from './gif_encoder.mjs';
 
 const Module = await createGifEncoderModule();
 const encoder = new Module.GifEncoder(width, height);
 
-encoder.addFrame(rgbaPixels, 10, 16); // 10 centiseconds, quality 16
-encoder.addFrame(rgbaPixels2, 10, 16);
+encoder.addFrame(imageData.data, 10, 16); // RGBA bytes, 10 centiseconds, quality 16
+encoder.addFrame(imageData2.data, 10, 16);
 
 const gifData = encoder.finish(); // Uint8Array
+encoder.delete();
 ```
 
 ## Build
 
 ```bash
-git submodule update --init
 ./build.sh
 ```
 
-Requires [Emscripten](https://emscripten.org/).
+Requires [Emscripten](https://emscripten.org/) (`em++` on `PATH`). The build enables WASM SIMD (`-msimd128 -msse2`), so msf_gif's SSE2 path is used; every current browser supports it.
 
 ## Output
 
-- `build/gif_encoder.js` - WASM loader
+- `build/gif_encoder.mjs` - WASM loader (ES module, works in pages and module workers)
 - `build/gif_encoder.wasm` - WASM binary
 - `build/gif_encoder.d.ts` - TypeScript types
 
