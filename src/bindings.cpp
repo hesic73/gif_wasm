@@ -1,9 +1,12 @@
 #define MSF_GIF_IMPL
 #include "msf_gif.h"
+#include "palette_gif.h"
 
 #include <emscripten/bind.h>
 #include <emscripten/val.h>
+#include <algorithm>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 using namespace emscripten;
@@ -73,6 +76,76 @@ private:
     bool finished_ = false;
 };
 
+// Copies a JS Uint8Array/Uint8ClampedArray into `dst` with one bulk TypedArray.set.
+// The view is created per call because memory growth detaches old views.
+static void copyIn(const val& src, std::vector<uint8_t>& dst) {
+    dst.resize(src["length"].as<size_t>());
+    val(typed_memory_view(dst.size(), dst.data())).call<void>("set", src);
+}
+
+/** Collects colour statistics from sample frames and builds an adaptive palette. */
+class PaletteBuilder {
+public:
+    /** @param pixelData RGBA pixels of any size */
+    void addSample(const val& pixelData) {
+        copyIn(pixelData, buffer_);
+        builder_.addSample(buffer_.data(), buffer_.size() / 4);
+    }
+
+    /** @returns RGB triplets, at most maxColors (1-255) of them; empty if no samples were added */
+    val build(int maxColors) {
+        std::vector<uint8_t> palette = builder_.build(std::max(1, std::min(255, maxColors)));
+        return val(typed_memory_view(palette.size(), palette.data())).call<val>("slice");
+    }
+
+private:
+    pgif::PaletteBuilder builder_;
+    std::vector<uint8_t> buffer_;
+};
+
+/** GIF encoder with one global, caller-supplied palette and a choice of dithering. */
+class PaletteGifEncoder {
+public:
+    /**
+     * @param palette RGB triplets, 1-255 colours (one table slot is kept for transparency)
+     * @param dither 0 = none, 1 = ordered, 2 = error diffusion
+     */
+    PaletteGifEncoder(int width, int height, const val& palette, int dither) : width_(width), height_(height) {
+        std::vector<uint8_t> colors;
+        copyIn(palette, colors);
+        const size_t count = colors.size() / 3;
+        if (width < 1 || height < 1 || width > 65535 || height > 65535 || colors.size() % 3 || count < 1 ||
+            count > 255 || dither < 0 || dither > 2) {
+            return;
+        }
+        encoder_ = std::make_unique<pgif::PaletteGifEncoder>(width, height, colors.data(), static_cast<int>(count),
+                                                             static_cast<pgif::Dither>(dither));
+    }
+
+    bool addFrame(const val& pixelData, int centiSeconds) {
+        if (!isValid()) return false;
+        if (pixelData["length"].as<size_t>() != static_cast<size_t>(width_) * height_ * 4) return false;
+        copyIn(pixelData, frame_);
+        return encoder_->addFrame(frame_.data(), centiSeconds);
+    }
+
+    val finish() {
+        if (!isValid()) return val::null();
+        finished_ = true;
+        std::vector<uint8_t> gif = encoder_->finish();
+        return val(typed_memory_view(gif.size(), gif.data())).call<val>("slice");
+    }
+
+    /** False if the constructor arguments were rejected or finish() was called. */
+    bool isValid() const { return encoder_ && !finished_; }
+
+private:
+    int width_, height_;
+    std::unique_ptr<pgif::PaletteGifEncoder> encoder_;
+    std::vector<uint8_t> frame_;
+    bool finished_ = false;
+};
+
 EMSCRIPTEN_BINDINGS(gif_encoder) {
     class_<GifEncoder>("GifEncoder")
         .constructor<int, int>()
@@ -81,4 +154,15 @@ EMSCRIPTEN_BINDINGS(gif_encoder) {
         .function("isValid", &GifEncoder::isValid)
         .function("getWidth", &GifEncoder::getWidth)
         .function("getHeight", &GifEncoder::getHeight);
+
+    class_<PaletteBuilder>("PaletteBuilder")
+        .constructor<>()
+        .function("addSample", &PaletteBuilder::addSample)
+        .function("build", &PaletteBuilder::build);
+
+    class_<PaletteGifEncoder>("PaletteGifEncoder")
+        .constructor<int, int, const val&, int>()
+        .function("addFrame", &PaletteGifEncoder::addFrame)
+        .function("finish", &PaletteGifEncoder::finish)
+        .function("isValid", &PaletteGifEncoder::isValid);
 }

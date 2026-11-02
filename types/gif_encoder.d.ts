@@ -11,7 +11,7 @@
  */
 
 /**
- * GIF Encoder class for creating animated GIFs
+ * Fast GIF encoder with a uniform palette and ordered dithering (msf_gif)
  */
 export interface GifEncoder {
     /**
@@ -66,13 +66,77 @@ export interface GifEncoderConstructor {
 }
 
 /**
- * Emscripten module containing the GIF encoder
+ * Collects colour statistics from sample frames and builds an adaptive palette
+ * (variance-minimising median cut refined with k-means).
+ */
+export interface PaletteBuilder {
+    /**
+     * Add a sample frame's colours to the histogram
+     * @param pixelData - RGBA pixels of any size; `ImageData.data` can be passed as is
+     */
+    addSample(pixelData: Uint8Array | Uint8ClampedArray): void;
+
+    /**
+     * Build the palette
+     * @param maxColors - Upper bound on the palette size, 1-255
+     * @returns RGB triplets (length = colours * 3); empty if no samples were added
+     */
+    build(maxColors: number): Uint8Array;
+
+    delete(): void;
+}
+
+export interface PaletteBuilderConstructor {
+    new(): PaletteBuilder;
+}
+
+/** Dithering for {@link PaletteGifEncoder}: 0 = none, 1 = ordered (8x8 Bayer), 2 = error diffusion (Floyd-Steinberg) */
+export type Dither = 0 | 1 | 2;
+
+/**
+ * GIF encoder with one global palette. Pixels that have not changed since they were last
+ * drawn are left transparent and each frame is cropped to the area it changes.
+ */
+export interface PaletteGifEncoder {
+    /**
+     * Add a frame to the GIF
+     * @param pixelData - RGBA pixel data (length = width * height * 4)
+     * @param centiSeconds - Frame duration in centiseconds
+     * @returns false if the length is wrong, the encoder is finished, or construction was rejected
+     */
+    addFrame(pixelData: Uint8Array | Uint8ClampedArray, centiSeconds: number): boolean;
+
+    /**
+     * @returns Uint8Array containing GIF file data (a JS-owned copy), or null on error
+     */
+    finish(): Uint8Array | null;
+
+    /**
+     * @returns false if the constructor arguments were rejected or finish() was called
+     */
+    isValid(): boolean;
+
+    delete(): void;
+}
+
+export interface PaletteGifEncoderConstructor {
+    /**
+     * @param width - Image width in pixels (1-65535)
+     * @param height - Image height in pixels (1-65535)
+     * @param palette - RGB triplets for 1-255 colours, e.g. from {@link PaletteBuilder.build}
+     * @param dither - Dithering method
+     */
+    new(width: number, height: number, palette: Uint8Array, dither: Dither): PaletteGifEncoder;
+}
+
+/**
+ * Emscripten module containing the GIF encoders
  */
 export interface GifEncoderModule {
-    /**
-     * GIF Encoder class
-     */
+    /** Fast encoder with a uniform palette (msf_gif) */
     GifEncoder: GifEncoderConstructor;
+    PaletteBuilder: PaletteBuilderConstructor;
+    PaletteGifEncoder: PaletteGifEncoderConstructor;
 }
 
 /**
